@@ -79,13 +79,13 @@ class TriU(nn.Module):
     
 class Mixer2dTriU(nn.Module):
     
-    def __init__(self, time_steps, input_size):
+    def __init__(self, time_steps, input_size, dropout=0.0):
         super(Mixer2dTriU, self).__init__()
         
         self.layer_norm_1 = nn.LayerNorm((time_steps, input_size))
         self.layer_norm_2 = nn.LayerNorm((time_steps, input_size))
         self.timeMixer = TriU(time_steps)
-        self.channelMixer = MixerBlock(input_size, input_size)
+        self.channelMixer = MixerBlock(input_size, input_size * 2, dropout=dropout)
 
     def forward(self, inputs):
         
@@ -99,11 +99,11 @@ class Mixer2dTriU(nn.Module):
     
 class MultTime2dMixer(nn.Module):
     
-    def __init__(self, time_step, channel, scale_dim):
+    def __init__(self, time_step, input_size, scale_dim, dropout=0.0):
         super(MultTime2dMixer, self).__init__()
         
-        self.mix_layer = Mixer2dTriU(time_step, channel)
-        self.scale_mix_layer = Mixer2dTriU(scale_dim, channel)
+        self.mix_layer = Mixer2dTriU(time_step, input_size, dropout=dropout)
+        self.scale_mix_layer = Mixer2dTriU(scale_dim, input_size, dropout=dropout)
 
     def forward(self, inputs, y):
         
@@ -115,12 +115,12 @@ class MultTime2dMixer(nn.Module):
     
 class StockMixer(nn.Module):
     
-    def __init__(self, time_steps, input_size, scale):
+    def __init__(self, time_steps, input_size, scale, dropout=0.0):
         super(StockMixer, self).__init__()
         
         scale_dim = time_steps // scale
         self.conv = nn.Conv1d(in_channels=input_size, out_channels=input_size, kernel_size=scale, stride=scale)
-        self.mixer = MultTime2dMixer(time_steps, input_size, scale_dim=scale_dim)
+        self.mixer = MultTime2dMixer(time_steps, input_size, scale_dim=scale_dim, dropout=dropout)
         self.time_fc = nn.Linear(time_steps * 2 + scale_dim, 1)
         self.channel_fc = nn.Linear(input_size, 1)
 
