@@ -70,7 +70,7 @@ class TriU(nn.Module):
 
     def forward(self, inputs):
         
-        x = torch.empty(*inputs.shape[:-1], 0)
+        x = torch.empty(*inputs.shape[:-1], 0).to(inputs.device)
         for i, triU in enumerate(self.triU):
             x = torch.cat((x, triU(inputs[..., :i + 1])), dim=-1)
         
