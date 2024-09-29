@@ -119,7 +119,7 @@ class StockMixer(nn.Module):
         super(StockMixer, self).__init__()
         
         scale_dim = time_steps // scale
-        self.conv = nn.Conv1d(in_channels=input_size, out_channels=input_size, kernel_size=2, stride=2)
+        self.conv = nn.Conv1d(in_channels=input_size, out_channels=input_size, kernel_size=scale, stride=scale)
         self.mixer = MultTime2dMixer(time_steps, input_size, scale_dim=scale_dim)
         self.time_fc = nn.Linear(time_steps * 2 + scale_dim, 1)
         self.channel_fc = nn.Linear(input_size, 1)
