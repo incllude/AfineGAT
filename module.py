@@ -1,7 +1,7 @@
-from torchmetrics import RetrievalNormalizedDCG
+from torchmetrics import RetrievalNormalizedDCG, MeanAbsoluteError
+from models import GAT, StockMixer
 from scipy.stats import rankdata
 import torch.nn.functional as F
-from models import GAT
 import lightning as l
 import torch.nn as nn
 import numpy as np
@@ -135,6 +135,73 @@ class StockRankingModel(l.LightningModule):
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=0.001, betas=(0.99, 0.999))
         scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=0.001, total_steps=self.total_steps, pct_start=0.1)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "step",
+                "frequency": 1
+            }
+        }
+
+
+class StockMixerModel(l.LightningModule):
+    def __init__(self, time_steps, input_size, total_steps, max_lr):
+        super(StockRankingModel, self).__init__()
+        self.save_hyperparameters()
+        
+        self.max_lr = max_lr
+        self.total_steps = total_steps
+        
+        self.mixer = StockMixer(time_steps, input_size, scale=2)
+        
+        self.metrics_values = {
+            "Train Loss": [],
+            "MAE of Return": []
+        }
+        self.metrics = {
+            "MAE of Return": MeanAbsoluteError()
+        }
+    
+    def forward(self, x):
+        # V, T, H = x.shape
+        
+        logits = self.mixer(x)
+        return logits
+    
+    def training_step(self, batch):
+        
+        loss = 0.
+        xs, trs = batch
+        
+        for x, tr in zip(xs, trs):
+            logits = self.forward(x) # V, 1
+            loss += F.mse_loss(logits, tr)
+        
+        loss /= xs.size(0)
+        self.metrics_values["Train Loss"].append(loss.item())
+        return loss
+
+    def validation_step(self, batch):
+        
+        x, tr = batch
+        tr = tr.cpu()
+        
+        logits = self.forward(x)
+        predictions = logits.flatten().cpu()
+        
+        for metric_name, metric in self.metrics.items():
+            self.metrics_values[metric_name].append(metric(predictions, tr).item())
+        
+    def on_train_epoch_end(self):
+        
+        for metric in self.metrics_values:
+            self.log(metric, np.mean(self.metrics_values[metric]))
+            self.metrics_values[metric].clear()
+    
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=0.001, betas=(0.9, 0.999))
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=self.max_lr, total_steps=self.total_steps, pct_start=0.05, div_factor=100, final_div_factor=100)
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
