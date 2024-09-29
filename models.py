@@ -10,7 +10,7 @@ class GAT(nn.Module):
                  input_size,
                  output_size,
                  negative_slope=0.2):
-        super().__init__()
+        super(MixerBlock, self).__init__()
         
         self.W = nn.Linear(input_size, output_size, bias=False)
         self.a = nn.Linear(2 * output_size, 1, bias=False)
@@ -40,3 +40,95 @@ class GAT(nn.Module):
         attentioned = self.nonlinear(attentioned)
         
         return attentioned
+    
+
+class MixerBlock(nn.Module):
+    
+    def __init__(self, input_size, hidden_size, dropout=0.0):
+        super(MixerBlock, self).__init__()
+
+        self.layer = nn.Sequential(nn.Linear(input_size, hidden_size),
+                                   nn.GELU(),
+                                   nn.Dropout(dropout),
+                                   nn.Linear(hidden_size, input_size),
+                                   nn.Dropout(dropout))
+
+    def forward(self, inputs):        
+        return self.layer(inputs)
+
+
+class TriU(nn.Module):
+    
+    def __init__(self, time_step):
+        super(TriU, self).__init__()
+        
+        self.time_step = time_step
+        self.triU = nn.ModuleList([
+            nn.Linear(i + 1, 1)
+            for i in range(time_step)
+        ])
+
+    def forward(self, inputs):
+        
+        x = torch.empty(*inputs.shape[:-1], 0)
+        for i, triU in enumerate(self.triU):
+            x = torch.cat((x, triU(inputs[..., :i + 1])), dim=-1)
+        
+        return x
+    
+    
+class Mixer2dTriU(nn.Module):
+    
+    def __init__(self, time_steps, input_size):
+        super(Mixer2dTriU, self).__init__()
+        
+        self.layer_norm_1 = nn.LayerNorm((time_steps, input_size))
+        self.layer_norm_2 = nn.LayerNorm((time_steps, input_size))
+        self.timeMixer = TriU(time_steps)
+        self.channelMixer = MixerBlock(input_size, input_size)
+
+    def forward(self, inputs):
+        
+        x = self.layer_norm_1(inputs)
+        x = self.timeMixer(x.mT).mT
+        x = self.layer_norm_2(x + inputs)
+        y = self.channelMixer(x)
+        
+        return x + y
+    
+    
+class MultTime2dMixer(nn.Module):
+    
+    def __init__(self, time_step, channel, scale_dim):
+        super(MultTime2dMixer, self).__init__()
+        
+        self.mix_layer = Mixer2dTriU(time_step, channel)
+        self.scale_mix_layer = Mixer2dTriU(scale_dim, channel)
+
+    def forward(self, inputs, y):
+        
+        x = self.mix_layer(inputs)
+        y = self.scale_mix_layer(y)
+        
+        return torch.cat((inputs, x, y), dim=1)
+    
+    
+class StockMixer(nn.Module):
+    
+    def __init__(self, time_steps, input_size, scale):
+        super(StockMixer, self).__init__()
+        
+        scale_dim = time_steps // scale
+        self.conv = nn.Conv1d(in_channels=input_size, out_channels=input_size, kernel_size=2, stride=2)
+        self.mixer = MultTime2dMixer(time_steps, input_size, scale_dim=scale_dim)
+        self.time_fc = nn.Linear(time_steps * 2 + scale_dim, 1)
+        self.channel_fc = nn.Linear(input_size, 1)
+
+    def forward(self, inputs):
+        
+        x = self.conv(inputs.mT).mT
+        y = self.mixer(inputs, x)
+        y = self.channel_fc(y).squeeze(-1)
+        y = self.time_fc(y)
+        
+        return y
